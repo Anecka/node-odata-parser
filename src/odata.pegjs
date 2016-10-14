@@ -58,7 +58,6 @@ primitiveLiteral            =   null /
                                 boolean /
                                 string
 
-
 null                        =   "null" ( "'" identifier "'" )?
                                 // The optional qualifiedTypeName is used to specify what type this null value should be considered.
                                 // Knowing the type is useful for function overload resolution purposes.
@@ -164,6 +163,8 @@ negativeInfinity            =   "-INF"
 
 positiveInfinity            =   "INF"
 
+comma                       =   [,]
+
 nanInfinity                 =   nan / negativeInfinity / positiveInfinity
 
 // end: OData literals
@@ -171,7 +172,10 @@ nanInfinity                 =   nan / negativeInfinity / positiveInfinity
 /*
  * OData identifiers
  */
-
+llPair                      = a:decimal WSP b:decimal {return [a, b]}
+llPairList                  = start:(p:llPair " "* comma " "* {return p})* last:llPair {return start.concat([last])}
+geographyPoint              = "POINT(" a:llPair ")" { return a } / "Point(" a:llPair ")" { return a }
+geographyPolygon            = "POLYGON((" a:llPairList "))" { return a } / "Polygon((" a:llPairList "))" { return a }
 unreserved                  = a:[a-zA-Z0-9-_]+ { return a.join(''); }
 validstring                 = a:([^']/escapedQuote)* { return a.join('').replace(/('')/g, "'"); }
 escapedQuote                = a:"''" { return a; }
@@ -273,19 +277,19 @@ filter                      =   "$filter=" list:filterExpr {
                                 }
                             /   "$filter=" .* { return {"error": 'invalid $filter parameter'}; }
 
-filterExpr                  = 
+filterExpr                  =
                               left:("(" WSP? filter:filterExpr WSP? ")"{return filter}) right:( WSP type:("and"/"or") WSP value:filterExpr{
                                     return { type: type, value: value}
                               })? {
                                 return filterExprHelper(left, right);
-                              } / 
+                              } /
                               left:cond right:( WSP type:("and"/"or") WSP value:filterExpr{
                                     return { type: type, value: value}
                               })? {
                                 return filterExprHelper(left, right);
                               }
 
-booleanFunctions2Args       = "substringof" / "endswith" / "startswith" / "IsOf"
+booleanFunctions2Args       = "contains" / "substringof" / "endswith" / "startswith" / "IsOf" / geographyFuncsIntersects
 
 booleanFunc                 =  f:booleanFunctions2Args "(" arg0:part "," WSP? arg1:part ")" {
                                     return {
@@ -300,11 +304,39 @@ booleanFunc                 =  f:booleanFunctions2Args "(" arg0:part "," WSP? ar
                                         func: "IsOf",
                                         args: [arg0]
                                     }
+                                } /
+                                geographyFuncIntersect
+
+booleanNegateFunctions2Args  = "not contains" / "not substringof" / "not endswith" / "not startswith" / "not IsOf"
+
+booleanNegateFunc            =  f:booleanNegateFunctions2Args "(" arg0:part "," WSP? arg1:part ")" {
+                                    return {
+                                        type: "functioncall",
+                                        func: f,
+                                        args: [arg0, arg1]
+                                    }
+                                } /
+                                "IsOf(" arg0:part ")" {
+                                    return {
+                                        type: "functioncall",
+                                        func: "IsOf",
+                                        args: [arg0]
+                                    }
                                 }
+
+otherFunctions0Arg          = "now"
+
+otherFunc0                  = f:otherFunctions0Arg "()" {
+                                return {
+                                    type: "functioncall",
+                                    func: f,
+                                    args: []
+                                }
+                             }
 
 otherFunctions1Arg          = "tolower" / "toupper" / "trim" / "length" / "year" /
                               "month" / "day" / "hour" / "minute" / "second" /
-                              "round" / "floor" / "ceiling"
+                              "round" / "floor" / "ceiling" / "date" / "time"
 
 otherFunc1                  = f:otherFunctions1Arg "(" arg0:part ")" {
                                   return {
@@ -338,17 +370,44 @@ otherFunc2                 = f:otherFunctions2Arg "(" arg0:part "," WSP? arg1:pa
                                   }
                               }
 
+geographyFuncsDistance      = "geo.distance"
+
+geographyFuncsIntersects    = "geo.intersects"
+
+geographyFuncsDistanceArgs  = geographyPoint    //can have many geometry types
+
+geographyFuncsIntersectsArgs = geographyPolygon //can have many geometry types
+
+geographyFuncDistance        = f:geographyFuncsDistance "(" arg0:part "," WSP? arg1:geographyFuncsDistanceArgs ")" {
+                                    return {
+                                        type: "functioncall",
+                                        func: f,
+                                        args: [arg0, arg1]
+                                    }
+                              }
+
+geographyFuncIntersect       = f:geographyFuncsIntersects "(" arg0:part "," WSP? arg1:geographyFuncsIntersectsArgs ")" {
+                                    return {
+                                        type: "functioncall",
+                                        func: f,
+                                        args: [arg0, arg1]
+                                    }
+                              }
+
 cond                        = a:part WSP op:op WSP b:part {
                                     return {
                                         type: op,
                                         left: a,
                                         right: b
                                     };
-                                } / booleanFunc
+                                } / booleanNegateFunc / booleanFunc
 
-part                        =   booleanFunc /
+part                        =   geographyFuncDistance /
+                                booleanNegateFunc /
+                                booleanFunc /
                                 otherFunc2 /
                                 otherFunc1 /
+                                otherFunc0 /
                                 l:primitiveLiteral {
                                     return {
                                         type: 'literal',
