@@ -273,19 +273,19 @@ filter                      =   "$filter=" list:filterExpr {
                                 }
                             /   "$filter=" .* { return {"error": 'invalid $filter parameter'}; }
 
-filterExpr                  = 
+filterExpr                  =
                               left:("(" WSP? filter:filterExpr WSP? ")"{return filter}) right:( WSP type:("and"/"or") WSP value:filterExpr{
                                     return { type: type, value: value}
                               })? {
                                 return filterExprHelper(left, right);
-                              } / 
+                              } /
                               left:cond right:( WSP type:("and"/"or") WSP value:filterExpr{
                                     return { type: type, value: value}
                               })? {
                                 return filterExprHelper(left, right);
                               }
 
-booleanFunctions2Args       = "substringof" / "endswith" / "startswith" / "IsOf"
+booleanFunctions2Args       = "contains" / "substringof" / "endswith" / "startswith" / "IsOf"
 
 booleanFunc                 =  f:booleanFunctions2Args "(" arg0:part "," WSP? arg1:part ")" {
                                     return {
@@ -302,9 +302,36 @@ booleanFunc                 =  f:booleanFunctions2Args "(" arg0:part "," WSP? ar
                                     }
                                 }
 
+booleanNegateFunctions2Args  = "not contains" / "not substringof" / "not endswith" / "not startswith" / "not IsOf"
+
+booleanNegateFunc            =  f:booleanNegateFunctions2Args "(" arg0:part "," WSP? arg1:part ")" {
+                                    return {
+                                        type: "functioncall",
+                                        func: f,
+                                        args: [arg0, arg1]
+                                    }
+                                } /
+                                "IsOf(" arg0:part ")" {
+                                    return {
+                                        type: "functioncall",
+                                        func: "IsOf",
+                                        args: [arg0]
+                                    }
+                                }
+
+otherFunctions0Arg          = "now"
+
+otherFunc0                  = f:otherFunctions0Arg "()" {
+                                return {
+                                    type: "functioncall",
+                                    func: f,
+                                    args: []
+                                }
+                             }
+
 otherFunctions1Arg          = "tolower" / "toupper" / "trim" / "length" / "year" /
                               "month" / "day" / "hour" / "minute" / "second" /
-                              "round" / "floor" / "ceiling"
+                              "round" / "floor" / "ceiling" / "date" / "time"
 
 otherFunc1                  = f:otherFunctions1Arg "(" arg0:part ")" {
                                   return {
@@ -344,11 +371,13 @@ cond                        = a:part WSP op:op WSP b:part {
                                         left: a,
                                         right: b
                                     };
-                                } / booleanFunc
+                                } / booleanNegateFunc / booleanFunc
 
-part                        =   booleanFunc /
+part                        =   booleanNegateFunc /
+                                booleanFunc /
                                 otherFunc2 /
                                 otherFunc1 /
+                                otherFunc0 /
                                 l:primitiveLiteral {
                                     return {
                                         type: 'literal',
